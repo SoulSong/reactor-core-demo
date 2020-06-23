@@ -1,13 +1,19 @@
 package com.shf.reactor;
 
 import org.junit.Test;
-
-import java.time.Duration;
-import java.util.Arrays;
-import java.util.List;
-
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
+import reactor.function.TupleUtils;
+
+import java.time.Duration;
+import java.time.Instant;
+import java.util.Arrays;
+import java.util.List;
+import java.util.concurrent.CountDownLatch;
+
+import static java.time.Duration.between;
 
 /**
  * 参考：http://www.infoq.com/cn/articles/reactor-by-example
@@ -16,6 +22,7 @@ import reactor.core.publisher.Mono;
  * @date 2017/10/10
  */
 public class ReactorSnippets {
+    private static final Logger LOGGER = LoggerFactory.getLogger(ReactorSnippets.class);
     private static List<String> words = Arrays.asList(
             "the",
             "quick",
@@ -142,4 +149,70 @@ public class ReactorSnippets {
                 })
                 .subscribe(System.out::println);
     }
+
+    /**
+     * 如果3种方式，type3最高效，type1和type2整体一致
+     * 场景，通过延迟模拟网络请求
+     *
+     * @throws InterruptedException e
+     */
+    @Test
+    public void zip() throws InterruptedException {
+        CountDownLatch countDownLatch = new CountDownLatch(3);
+        Instant start = Instant.now();
+
+        Mono.zip(getYear(), getName())
+                .flatMap(TupleUtils.function((year, name) -> updateByYearAndName(findByYear(Mono.just(year)), Mono.just(name))))
+                .subscribe(result -> {
+                    LOGGER.info("type1----->result:{}, spend:{}", result, between(Instant.now(), start));
+                    countDownLatch.countDown();
+                });
+
+        Mono.zip(getYear(), getName())
+                .flatMap(TupleUtils.function((year, name) -> {
+                    return findByYear(Mono.just(year))
+                            .flatMap(y -> updateByYearAndName(Mono.just(y), Mono.just(name)));
+                }))
+                .subscribe(result -> {
+                    LOGGER.info("type2----->result:{}, spend:{}", result, between(Instant.now(), start));
+                    countDownLatch.countDown();
+                });
+
+        // 最高效，其中getYear优先返回后即可立即执行findByYear方法，无需等待getName返回，故减少了1S的延迟
+        Mono.zip(findByYear(getYear()), getName())
+                .flatMap(TupleUtils.function((year, name) -> updateByYearAndName(Mono.just(year), Mono.just(name))))
+                .subscribe(result -> {
+                    LOGGER.info("type3----->result:{}, spend:{}", result, between(Instant.now(), start));
+                    countDownLatch.countDown();
+                });
+
+        countDownLatch.await();
+    }
+
+    private Mono<Integer> getYear() {
+        return Mono.delay(Duration.ofSeconds(1)).thenReturn(2021).doOnSubscribe(subscription -> {
+            LOGGER.info("Subscribe getYear.");
+        });
+    }
+
+    private Mono<String> getName() {
+        return Mono.delay(Duration.ofSeconds(2)).thenReturn("song").doOnSubscribe(subscription -> {
+            LOGGER.info("Subscribe getName.");
+        });
+    }
+
+    private Mono<Integer> findByYear(Mono<Integer> year) {
+        return year.delaySubscription(Duration.ofSeconds(1))
+                .flatMap(y -> {
+                    if (y > 2020) {
+                        return Mono.just(y + 1000);
+                    }
+                    return Mono.just(y - 1000);
+                });
+    }
+
+    private Mono<String> updateByYearAndName(Mono<Integer> year, Mono<String> name) {
+        return year.flatMap(y -> name.flatMap(n -> Mono.just("year:[" + y + "] and name:[" + n + "]")));
+    }
+
 }
