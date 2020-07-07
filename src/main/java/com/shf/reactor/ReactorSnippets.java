@@ -215,4 +215,55 @@ public class ReactorSnippets {
         return year.flatMap(y -> name.flatMap(n -> Mono.just("year:[" + y + "] and name:[" + n + "]")));
     }
 
+    /**
+     * limitRequest约束了每个消费者最多消费的数量,而limitRate约束了每次request最多个数
+     */
+    @Test
+    public void limitRequestTest() {
+        LOGGER.info("Consumer with no limit");
+        Flux.range(1, 5)
+                .take(3)
+                .subscribe(event -> LOGGER.info("{}", event));
+
+        LOGGER.info("Consumer with limit");
+        Flux.range(1, 5)
+                .limitRequest(2)
+                .take(3)
+                .subscribe(event -> LOGGER.info("{}", event));
+    }
+
+    /**
+     * 实现批处理
+     */
+    @Test
+    public void bufferTest() {
+        Flux.range(1, 5)
+                .buffer(2)
+                .doOnNext(list -> LOGGER.info("items : {}", list))
+                .subscribe(event -> LOGGER.info("{}", event));
+    }
+
+    /**
+     * 同样可以实现批处理，但不同于buffer：
+     * buffer先阻塞收集，直到满足条件后开始被消费，完全消费后进入第一个阻塞收集期，如此反复循环；
+     * window先消费，直到满足条件进入下一个窗口；
+     */
+    @Test
+    public void windowTest() {
+        LOGGER.info("Consumer without collect");
+        Flux.range(1, 5)
+                .window(2)
+                .subscribe(events -> {
+                    LOGGER.info("consumer current window:");
+                    events.subscribe(event -> LOGGER.info("{}", event));
+                });
+
+        LOGGER.info("Consumer with collect");
+        Flux.range(1, 5)
+                .window(2)
+                .subscribe(window -> {
+                    LOGGER.info("consumer current window:");
+                    window.collectList().subscribe(event -> LOGGER.info("{}", event));
+                });
+    }
 }
